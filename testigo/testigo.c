@@ -1,3 +1,6 @@
+/*Sistema distribuido utilizando el algoritmo de Ricart-Agrawala de paso de testigo, 
+Este es un sistema simple que solo tiene un proceso por nodo*/
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdbool.h>

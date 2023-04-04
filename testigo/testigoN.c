@@ -1,3 +1,10 @@
+/*
+Sistema distribuido utilizando el algoritmo de Ricart-Agrawala de paso de testigo, 
+este es un sistema tiene P = 5 procesos por nodo.
+El programa funciona de forma autómatica a diferencia de testigo.c donde tenías que ir dándole
+a enter para que el proceso avanzara
+*/
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdbool.h>

@@ -4,9 +4,10 @@
 #include <pthread.h>
 #include <sys/ipc.h>
 #include <sys/msg.h>
+#include <sys/types.h>
 #include <semaphore.h>
 
-#define N 5
+#define N 5 // --> nodos
 
 int ticket = 0;
 int max_ticket = 0;
@@ -21,12 +22,10 @@ sem_t sem_ticket, sem_max_ticket, sem_mi_id,
         sem_id_nodos_pend, sem_buzones_nodos, 
         sem_quiero; 
 
-struct msgbuf_solicitud{
+struct msgbuf_message{
+  long mtype;  //1 --> solicitud; 2 --> ACK
   int id;
   int ticket;
-};
-struct msgbuf_respuesta{
-    int id;
 };
 
 void *receptor(void *n);
@@ -34,8 +33,9 @@ int max(int n1, int n2);
 
 int main(int argc, char *argv[]){
 
-    if(argc != 2){
+    if(argc != 2 || atoi(argv[1]) == 0){
         printf("La forma de ejecución es: %s \"id_nodo\"\n", argv[0]);
+        printf("El id del nodo no puede ser 0, [1, N]\n");
         return -1;
     }
 
@@ -45,10 +45,8 @@ int main(int argc, char *argv[]){
     int i;
     int id_mi_buzon;
 
-    struct msgbuf_solicitud msg_solicitud;
-    msg_solicitud.id = mi_id;
-    struct msgbuf_respuesta msg_recivido, msg_enviar_ok;
-    msg_enviar_ok.id = mi_id;
+    struct msgbuf_message msg_solicitud;
+    struct msgbuf_message msg_recivido, msg_enviar;
 
 
     //INICIALIZACIÓN BUZONES DE LOS NODOS
@@ -92,10 +90,12 @@ int main(int argc, char *argv[]){
         sem_post(&sem_quiero);
         sem_wait(&sem_ticket);
         sem_wait(&sem_max_ticket);
-        ticket = max_ticket++;
+        ticket = max_ticket + 1;
         sem_post(&sem_max_ticket);
         msg_solicitud.ticket = ticket;
         sem_post(&sem_ticket);
+        msg_solicitud.id = yo;
+        msg_solicitud.mtype = 1;
 
         //ENVIO PETICIONES
         for(i = 0; i < N; i++){
@@ -107,7 +107,6 @@ int main(int argc, char *argv[]){
 
             }else{
 
-                printf("Enviando solicitud al nodo: %d\n", i + 1);
                 sem_wait(&sem_buzones_nodos);
                 if(msgsnd(buzones_nodos[i], &msg_solicitud, sizeof(msg_solicitud), 0) == -1){
 
@@ -116,7 +115,6 @@ int main(int argc, char *argv[]){
                 }else{
                     
                     sem_post(&sem_buzones_nodos);
-                    printf("Mensaje enviado con EXITO. \n");
                 }
             }
         }
@@ -132,13 +130,12 @@ int main(int argc, char *argv[]){
 
             }else{
 
-                printf("Enviando solicitud al nodo: %d\n", i + 1);
-                if(msgrcv(id_mi_buzon, &msg_recivido, sizeof(msg_recivido), 0, 0) == -1){
+                if(msgrcv(id_mi_buzon, &msg_recivido, sizeof(msg_recivido), 2, 0) == -1){
 
                     printf("\n\tERROR: Hubo un error enviando el mensaje al nodo: %i.\n", i);
                 }else{
                     
-                    printf("Mensaje enviado con EXITO. \n");
+                    printf("Mensaje del nodo %i recibido con EXITO. \n", msg_recivido.id);
                 }
             }
         }
@@ -158,17 +155,22 @@ int main(int argc, char *argv[]){
             if(id_nodos_pend[i] > 0){
 
                 sem_post(&sem_id_nodos_pend);
+                printf("Le tengo que enviar un ACK al nodo %i\n", i + 1);
+                msg_enviar.mtype = 2;
+                msg_enviar.id = yo;
                 sem_wait(&sem_buzones_nodos);
-                if(msgsnd(buzones_nodos[i], &msg_enviar_ok, sizeof(msg_enviar_ok), 0) == -1){
+                if(msgsnd(buzones_nodos[i], &msg_enviar, sizeof(msg_enviar), 0) == -1){
 
                     sem_post(&sem_buzones_nodos);
-                    printf("\n\tERROR: Hubo un error enviando el mensaje al nodo: %i.\n", i);
+                    printf("\n\tERROR 2: Hubo un error enviando el mensaje al nodo: %i.\n", i + 1);
                 }else{
                     
                     sem_post(&sem_buzones_nodos);
                     printf("Mensaje enviado con EXITO. \n");
                 }
+                sem_wait(&sem_id_nodos_pend);
                 id_nodos_pend[i] = 0;
+                sem_post(&sem_id_nodos_pend);
 
             }else{
 
@@ -184,8 +186,10 @@ int main(int argc, char *argv[]){
 
 void *receptor(void *n){
 
-    struct msgbuf_solicitud msg_peticion;
-    struct msgbuf_respuesta msg_respuesta;
+    struct msgbuf_message msg_peticion;
+    struct msgbuf_message msg_respuesta;
+    msg_peticion.mtype = 1;
+    msg_respuesta.mtype = 2;
     sem_wait(&sem_mi_id);
     int mi_id_receptor = mi_id - 1;
     sem_post(&sem_mi_id);
@@ -197,7 +201,7 @@ void *receptor(void *n){
     while(true){
 
         //RECIBIMOS PETICIÓN
-        if(msgrcv(id_de_mi_buzon, &msg_peticion, sizeof(msg_peticion), 0, 0) == -1){
+        if(msgrcv(id_de_mi_buzon, &msg_peticion, sizeof(msg_peticion), 1, 0) == -1){
             printf("ERROR: Hubo un error al recibir un mensaje en el RECEPTOR.\n");
         }
         printf("He recibido un mensaje del nodo: %d\n", msg_peticion.id);
@@ -206,27 +210,30 @@ void *receptor(void *n){
         max_ticket = max(max_ticket, msg_peticion.ticket);
         sem_post(&sem_max_ticket);
 
-        sem_wait(&quiero);
+        sem_wait(&sem_quiero);
         sem_wait(&sem_ticket);
         if(!quiero || msg_peticion.ticket < ticket || (msg_peticion.ticket == ticket  && msg_peticion.id < mi_id_receptor + 1)){
-            sem_post(&quiero);
+            sem_post(&sem_quiero);
             sem_post(&sem_ticket);
+            msg_respuesta.id = mi_id_receptor + 1;
+            msg_respuesta.mtype = 2;
             sem_wait(&sem_buzones_nodos);
             if(msgsnd(buzones_nodos[msg_peticion.id - 1], &msg_respuesta, sizeof(msg_respuesta), 0) == -1){
 
                 sem_post(&sem_buzones_nodos);
-                printf("\n\tERROR: Hubo un error enviando el mensaje al nodo: %i.\n", msg_peticion.id);
+                printf("\n\tERROR 3: Hubo un error enviando el mensaje al nodo: %i.\n", msg_peticion.id);
             }else{
                 
                 sem_post(&sem_buzones_nodos);
                 printf("Mensaje enviado con EXITO. \n");
             }
         }else{
-            sem_post(&quiero);
+            sem_post(&sem_quiero);
             sem_post(&sem_ticket);
             sem_wait(&sem_id_nodos_pend);
-            id_nodos_pend[msg_peticion.id - 1]++;
-            sem_post(&id_nodos_pend);
+            id_nodos_pend[msg_peticion.id - 1] = id_nodos_pend[msg_peticion.id - 1] + 1;
+            printf("El id del nodo pendiente es %i\n", msg_peticion.id);
+            sem_post(&sem_id_nodos_pend);
         }
 
     }

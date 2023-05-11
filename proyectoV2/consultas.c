@@ -21,6 +21,7 @@ int main(int argc, char *argv[]){
     #ifdef __PRINT_PROCESO
     printf("CONSULTAS --> Hola\n"); 
     #endif
+    sleep(3);
     sem_wait(&(me->sem_contador_consultas_pendientes));
     me->contador_consultas_pendientes = me->contador_consultas_pendientes + 1;
     sem_wait(&(me->sem_testigo));
@@ -42,9 +43,10 @@ int main(int argc, char *argv[]){
         //Enviamos peticiones
         send_peticiones(me, mi_id, CONSULTAS);
         // ACABAMOS CON EL ENVIO DE PETICIONES AHORA ME TOCA ESPERAR.
-        printf("ESpero\n");
+        printf("Espero\n");
         sem_wait(&(me->sem_consult_pend));
-        printf("salgo\n");
+        
+        
     }else{ // NO TENGO QUE PEDIR EL TESTIGO
         sem_post(&(me->sem_testigo));
         sem_post(&(me->sem_turno_C));
@@ -129,6 +131,7 @@ int main(int argc, char *argv[]){
         #ifdef __PRINT_PROCESO
         printf("CONSULTAS --> soy el último y envio el testigo.\n");
         #endif
+        
         sem_wait(&(me->sem_dentro));
         me->dentro = false;
         sem_post(&(me->sem_dentro));
@@ -149,8 +152,8 @@ int main(int argc, char *argv[]){
         #ifdef __PRINT_PROCESO
         printf("CONSULTAS --> Chao.\n");
         #endif
+        
 
     }
-    
     return 0;
 }

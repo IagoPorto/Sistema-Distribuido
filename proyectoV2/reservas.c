@@ -29,7 +29,7 @@ int main(int argc, char *argv[]){
     sem_wait(&(me->sem_contador_procesos_max_SC));
 
     printf("DEBUGGGGG: testigo %i; turnoRA: %i; turno: %i; contadorMAX: %d; contadorRA: %d\n", me->testigo, me->turno_RA, me->turno, me->contador_procesos_max_SC, me->contador_reservas_admin_pendientes);
-    
+    sleep(2);
     if ((!me->testigo && (me-> contador_reservas_admin_pendientes == 1)) || 
          (me->testigo && me->turno_RA && (me->contador_reservas_admin_pendientes + me->contador_procesos_max_SC - EVITAR_RETECION_EM) == 1)
          || (me->testigo && (me-> contador_reservas_admin_pendientes == 1) && !me->turno_RA && me->turno)){ 
@@ -148,10 +148,17 @@ int main(int argc, char *argv[]){
                 sem_wait(&(me->sem_turno));
                 me->turno = false;
                 sem_post(&(me->sem_turno));
-                send_testigo(mi_id, me);
                 sem_wait(&(me->sem_dentro));
                 me->dentro = false;
                 sem_post(&(me->sem_dentro));
+                sem_wait(&(me->sem_prioridad_max_otro_nodo));
+                if(me->prioridad_max_otro_nodo == CONSULTAS){
+                    sem_post(&(me->sem_prioridad_max_otro_nodo));
+                    send_copias_testigos(mi_id, me);
+                }else{
+                    sem_post(&(me->sem_prioridad_max_otro_nodo));
+                    send_testigo(mi_id, me);
+                }
             }else{
                 sem_post(&(me->sem_prioridad_max_otro_nodo));
                 sem_post(&(me->sem_contador_procesos_max_SC));

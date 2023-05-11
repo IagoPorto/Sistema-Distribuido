@@ -15,13 +15,13 @@
 
 #define __PRINT_RX        // comentar en caso de no querer mensajes del proceso receptor
 #define __PRINT_PROCESO   // comentar en caso de no querer mensajes de los procesos escritores del nodo.
-#define __PRINT_CONSULTAS // comentar en caso deno querer mensajes de los procesos consultas.
+//#define __PRINT_CONSULTAS // comentar en caso deno querer mensajes de los procesos consultas.
 #define __DEBUG
 
 #define N 4 // --> nodos
 #define P 3 // --> prioridades
 #define MAX_ESPERA 10
-#define SLEEP 3
+#define SLEEP 5
 
 #define PAGOS_ANUL 3
 #define ADMIN_RESER 2
@@ -77,6 +77,11 @@ typedef struct{ // MEMOMORIA COMPARTIDA POR LOS PROCESOS DE UN NODO.
   sem_t sem_contador_anul_pagos_pendientes, sem_contador_reservas_admin_pendientes, sem_contador_consultas_pendientes;
   sem_t sem_anul_pagos_pend, sem_reser_admin_pend, sem_consult_pend;
 } memoria;
+
+int max(int n1, int n2){
+  if (n1 > n2)return n1;
+  else return n2;
+}
 
 void set_prioridad_max(memoria *me){
   sem_wait(&(me->sem_contador_anul_pagos_pendientes));
@@ -281,28 +286,69 @@ void send_copias_testigos(int mi_id, memoria *me){//enviar copias del testigo
       sem_post(&me->sem_atendidas);
     }
   }
-  sem_wait(&(me->sem_atendidas));
-  sem_wait(&(me->sem_peticiones));
+  
   for(i = 0; i < N; i ++){
+    sem_wait(&(me->sem_atendidas));
+    sem_wait(&(me->sem_peticiones));
     if(me->atendidas[i][CONSULTAS - 1] < me->peticiones[i][CONSULTAS - 1]){
       me->atendidas[i][CONSULTAS - 1] = me->peticiones[i][CONSULTAS - 1];
+      sem_post(&(me->sem_atendidas));
+      sem_post(&(me->sem_peticiones));
       sem_wait(&(me->sem_buzones_nodos));
       if (msgsnd(me->buzones_nodos[i], &msg_testigo, sizeof(msg_testigo), 0)){
         printf("PROCESO ENVIO TESTIGO FALSO: \n\n\tERROR: Hubo un error al enviar el testigo.\n");
       }
       sem_post(&me->sem_buzones_nodos);
+    }else{
+      sem_post(&(me->sem_atendidas));
+      sem_post(&(me->sem_peticiones));
     }
   }
-  sem_post(&(me->sem_atendidas));
-  sem_post(&(me->sem_peticiones));
+  
 }
 
 void send_testigo_consultas_master(int mi_id, memoria *me){//enviar el testigo a quien tenga lectores o dar paso a un lector
   set_prioridad_max(me);                                   //después del turno de consultas
                                                             // paso de consultas a lector, esta función la usa el nodo_master
+  int i, j;
+  sem_wait(&(me->sem_prioridad_max_otro_nodo));
+  me->prioridad_max_otro_nodo = 0;
+  sem_post(&(me->sem_prioridad_max_otro_nodo));
+  
+  // actualizar vector de atendidas y saber cual es la prioridad máxima de otro nodo
+  for (i = 0; i < N; i++){
+    if(mi_id != i + 1){
+      for (j = 0; j < P; j++){
+        sem_wait(&(me->sem_atendidas));
+        sem_wait(&(me->sem_peticiones));
+        if (me->atendidas[i][j] < me->peticiones[i][j]){
+          sem_post(&(me->sem_atendidas));
+          sem_post(&(me->sem_peticiones));
+          sem_wait(&(me->sem_prioridad_max_otro_nodo));
+          me->prioridad_max_otro_nodo = max(me->prioridad_max_otro_nodo, j + 1);
+          printf("prioridad max: %d\n", me->prioridad_max_otro_nodo);
+          sem_post(&(me->sem_prioridad_max_otro_nodo));
+        }else{
+          sem_post(&(me->sem_atendidas));
+          sem_post(&(me->sem_peticiones));
+        }
+      }
+    }
+  }
+  for(i = 0; i < N; i++){
+      printf("NODO %d\n", i + 1);
+      sem_wait(&(me->sem_atendidas));
+      sem_wait(&(me->sem_peticiones));
+      printf("\tPeticiones: %d, %d, %d\n", me->peticiones[i][0], me->peticiones[i][1], me->peticiones[i][2]);
+      printf("\tAtendidas : %d, %d, %d\n", me->atendidas[i][0], me->atendidas[i][1], me->atendidas[i][2]);
+      sem_post(&(me->sem_atendidas));
+      sem_post(&(me->sem_peticiones));
+  }
+  
+
   sem_wait(&(me->sem_prioridad_max_otro_nodo));
   sem_wait(&(me->sem_prioridad_maxima));
-  if(me->prioridad_max_otro_nodo > me->prioridad_maxima){
+  if((me->prioridad_max_otro_nodo > me->prioridad_maxima) && me->prioridad_max_otro_nodo != CONSULTAS){
     printf("envio el testigo a quien corresponda\n");
     sem_post(&(me->sem_prioridad_max_otro_nodo));
     sem_post(&(me->sem_prioridad_maxima));
@@ -343,7 +389,6 @@ void send_testigo_consultas(int mi_id, memoria *me){//enviar la copia del testig
                                                     //por los nodos con consultas cuando ya no tienen consultas
                                                     //o cuando les toca devolver el testigo porque hay procesos
                                                     //escritores
-
   int i;
   sem_wait(&(me->sem_nodo_master));
   if(me->nodo_master){//SOY EL NODO MASTER
@@ -385,14 +430,17 @@ void send_testigo_consultas(int mi_id, memoria *me){//enviar la copia del testig
     #endif
     struct msgbuf_mensaje msg_testigo;
     msg_testigo.msg_type = (long)4;
+    printf("El type es: %ld\n", msg_testigo.msg_type);
     msg_testigo.id = mi_id;
     sem_wait(&(me->sem_id_nodo_master));
+    printf("El id del nodo master: %d\n", me->id_nodo_master);
     msg_testigo.id_nodo_master = me->id_nodo_master;
     sem_post(&(me->sem_id_nodo_master));
     sem_wait(&me->sem_buzones_nodos);
     if (msgsnd(me->buzones_nodos[msg_testigo.id_nodo_master - 1], &msg_testigo, sizeof(msg_testigo), 0)){
       printf("PROCESO ENVIO TESTIGO FALSO: \n\n\tERROR: Hubo un error al enviar el testigo.\n");
     }
+    printf("Testigo enviado\n");
     sem_post(&me->sem_buzones_nodos);
   }
   sem_wait(&(me->sem_atendidas));
@@ -404,6 +452,7 @@ void send_testigo_consultas(int mi_id, memoria *me){//enviar la copia del testig
   if(me->contador_consultas_pendientes > 0){
     sem_post(&(me->sem_contador_consultas_pendientes));
     send_peticiones(me, mi_id, CONSULTAS);
+    printf("envio peticiones porque hay consultas  pendientes\n");
   }else{
     sem_post(&(me->sem_contador_consultas_pendientes));
   }
@@ -412,9 +461,6 @@ void send_testigo_consultas(int mi_id, memoria *me){//enviar la copia del testig
 
 
 
-int max(int n1, int n2){
-  if (n1 > n2)return n1;
-  else return n2;
-}
+
 
 #endif
